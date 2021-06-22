@@ -16,7 +16,7 @@ public class ClothManager : MonoBehaviour
     float[] f0;
     float[] B;
     float[] X;
-    float dT = 0.005f;
+    float dT = 0.03f;
     Matrix4x4 renderMatrix = new Matrix4x4();
     List<Mesh> grassMeshes = new List<Mesh>();
     public float kStructuralC = 10f;
@@ -24,6 +24,7 @@ public class ClothManager : MonoBehaviour
     public float kDamp = 5f;
     public float fWind = 1f;
     public float tWind = 1f;
+    float tnow = 0;
     MySparseMatrix mat;
     void Start()
     {
@@ -342,9 +343,10 @@ public class ClothManager : MonoBehaviour
             f[i] += -v[i] * kDamp;
         }
 
+        tnow += dT;
         for (int i = 0; i < f.Length; i++)
         {
-            f[i] += new Vector3(0f, 0f, -1f) * Mathf.Pow(Mathf.Sin(Time.time * tWind), 2f) * fWind;
+            f[i] += new Vector3(0f, 0f, -1f) * Mathf.Pow(Mathf.Sin(tnow * tWind), 2f) * fWind;
         }
 
 
@@ -413,6 +415,7 @@ public class ClothManager : MonoBehaviour
 
     public void BackwardEuler(ref Vector3[] vertices)
     {
+        tnow += dT;
         float lRestStructural = Size / (N - 1);
         float lRestShear = lRestStructural / Mathf.Sqrt(2);
         float lRestBend = lRestStructural * 2;
@@ -588,12 +591,12 @@ public class ClothManager : MonoBehaviour
         }
         for (int i = 0; i < f.Length; i++)
         {
-            f[i] += -v[i] * kDamp;
+            f[i] += -new Vector3(v0[i * 3 + 0], v0[i * 3 + 1], v0[i * 3 + 2]) * kDamp;
         }
 
         for (int i = 0; i < f.Length; i++)
         {
-            f[i] += new Vector3(0f, 0f, -1f) * Mathf.Pow(Mathf.Sin(Time.time * tWind), 2f) * fWind;
+            f[i] += new Vector3(0f, 0f, -1f) * Mathf.Pow(Mathf.Sin(tnow * tWind), 2f) * fWind;
         }
 
         mat.Multiply(ref v0, ref B);
@@ -601,7 +604,7 @@ public class ClothManager : MonoBehaviour
         {
             B[i * 3 + 0] = dT / mass * (B[i * 3 + 0] * dT + f[i].x);
             B[i * 3 + 1] = dT / mass * (B[i * 3 + 1] * dT + f[i].y);
-            B[i * 3 + 2] = dT / mass * (B[i * 3 + 2] * dT + f[i].z);
+            B[i * 3 + 2] = dT / mass * (B[i * 3 + 2] * dT + f[i].z - dT * 2f * fWind * Mathf.Sin(tnow * tWind) * Mathf.Cos(tnow * tWind) * tWind);
         }
         for (int i = 0; i < v0.Length; i++)
         {
@@ -632,7 +635,7 @@ public class ClothManager : MonoBehaviour
         GS();
         for (int i = 0; i < v0.Length; i++)
         {
-            v0[i] += dT * X[i]; 
+            v0[i] += X[i]; 
         }
         for (int i = 0; i < vertices.Length; i++)
         {
