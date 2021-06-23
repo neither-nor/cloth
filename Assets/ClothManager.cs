@@ -6,36 +6,58 @@ using UnityEditor;
 public class ClothManager : MonoBehaviour
 {
     // Start is called before the first frame update
-    static public Mesh terrainMesh;
+    public Mesh clothMesh;
     const float Size = 10f;
     [Range(3, 100)] public int N = 10;
     public float totMass = 100;
     Vector3[] f;
     Vector3[] v;
     float[] v0;
+    float[] dv0;
     float[] f0;
     float[] B;
     float[] X;
-    float dT = 0.03f;
-    Matrix4x4 renderMatrix = new Matrix4x4();
-    List<Mesh> grassMeshes = new List<Mesh>();
+    float dT = 0.005f;
+    List<int> triangles;
+    List<Vector2> uvs;
+    List<Vector3> verticesRest;
     public float kStructuralC = 10f;
     public float kBendC = 1f;
     public float kDamp = 5f;
     public float fWind = 1f;
     public float tWind = 1f;
+    public bool fixStrain;
+
+    float lRestStructural;
+    float lRestShear;
+    float lRestBend;
+
+    float kStructural;
+    float kShear;
+    float kBend;
+
     float tnow = 0;
     MySparseMatrix mat;
     void Start()
     {
-        f = new Vector3[N * N + (N - 1) * (N - 1)];
-        v = new Vector3[N * N + (N - 1) * (N - 1)];
+        f = new Vector3[N * N];
+        v = new Vector3[N * N];
         f0 = new float[f.Length * 3];
         v0 = new float[v.Length * 3];
+        dv0 = new float[v.Length * 3];
         B = new float[v.Length * 3];
         X = new float[v.Length * 3];
+
+
+        lRestStructural = Size / (N - 1);
+        lRestShear = lRestStructural * Mathf.Sqrt(2);
+        lRestBend = lRestStructural * 2;
+
+        kStructural = kStructuralC / (1f / (N - 1));
+        kShear = kStructuralC / (1f / (N - 1) * Mathf.Sqrt(2f));
+        kBend = kBendC / (1f / (N - 1) * 2);
+
         BuildClothMesh();
-        Application.targetFrameRate = 60;
     }
     void CalcNormal(ref Vector3[] vertices, ref List<Vector3> normals)
     {
@@ -73,113 +95,51 @@ public class ClothManager : MonoBehaviour
 
             }
         }
-        for (int i = 0; i < N - 1; i++)
-        {
-            for (int j = 0; j < N - 1; j++)
-            {
-                Vector3 dx;
-                Vector3 dz;
-                if (i != N - 2 && i != 0)
-                {
-                    dx = vertices[N * N + i * (N - 1) + j + N - 1] - vertices[N * N + i * (N - 1) + j - (N - 1)];
-                }
-                else if (i == 0)
-                {
-                    dx = (vertices[N * N + i * (N - 1) + j + N - 1] - vertices[N * N + i * (N - 1) + j]) * 2;
-                }
-                else
-                {
-                    dx = (vertices[N * N + i * (N - 1) + j] - vertices[N * N + i * (N - 1) + j - (N - 1)]) * 2;
-                }
-                if (j != N - 2 && j != 0)
-                {
-                    dz = (vertices[N * N + i * (N - 1) + j + 1] - vertices[N * N + i * (N - 1) + j - 1]);
-                }
-                else if (j == 0)
-                {
-                    dz = (vertices[N * N + i * (N - 1) + j + 1] - vertices[N * N + i * (N - 1) + j]) * 2;
-                }
-                else
-                {
-                    dz = (vertices[N * N + i * (N - 1) + j] - vertices[N * N + i * (N - 1) + j - 1]) * 2;
-                }
-                normals.Add(Vector3.Cross(dz, dx).normalized);
-
-            }
-        }
     }
 
     public void BuildClothMesh()
     {
         MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
 
-        terrainMesh = new Mesh();
-        List<Vector3> vertices = new List<Vector3>();
-        List<Vector2> uvs = new List<Vector2>();
+        clothMesh = new Mesh();
+        verticesRest = new List<Vector3>();
+        uvs = new List<Vector2>();
         List<Vector3> normals = new List<Vector3>();
-        List<int> triangles = new List<int>();
+        triangles = new List<int>();
         for (int i = 0; i < N; i++)
         {
             for (int j = 0; j < N; j++)
             {
                 Vector2 uv = new Vector2(1f * i / (N - 1), 1f * j / (N - 1));
                 uvs.Add(uv);
-                Vector3 p = new Vector3(uv.x - .5f, 0, uv.y - .5f) * 2f;
                 Vector3 v = new Vector3(uv.x * Size,
                                         0f,
                                         uv.y * Size);
-                /*
-                if (p.magnitude > 1)
-                {
-                    v = p.normalized / 2 + new Vector3(.5f, 0f, .5f);
-                    v.y = 1 - p.magnitude;
-                    v *= Size;
-                    normals.Add(p.normalized);
-                } else {
-                    p.y = Mathf.Sqrt(1 - Mathf.Pow(p.magnitude, 2));
-                    v.y = p.y * Size / 2f;
-                    normals.Add(p);
-                }
-                */
-                vertices.Add(v);
+                verticesRest.Add(v);
             }
         }
         for (int i = 0; i < N - 1; i++)
         {
             for (int j = 0; j < N - 1; j++)
             {
-                Vector2 uv = new Vector2((i + .5f) / (N - 1), (j + .5f) / (N - 1));
-                uvs.Add(uv);
-                Vector3 v = new Vector3(uv.x * Size,
-                                        0f,
-                                        uv.y * Size);
-                vertices.Add(v);
-            }
-        }
-        for (int i = 0; i < N - 1; i++)
-        {
-            for (int j = 0; j < N - 1; j++)
-            {
-                triangles.Add(N * N + i * (N - 1) + j);
-                triangles.Add(i * N + j + 1);
-                triangles.Add(i * N + j + N + 1);
-                triangles.Add(N * N + i * (N - 1) + j);
-                triangles.Add(i * N + j + N + 1);
-                triangles.Add(i * N + j + N);
-                triangles.Add(N * N + i * (N - 1) + j);
-                triangles.Add(i * N + j + N);
-                triangles.Add(i * N + j);
-                triangles.Add(N * N + i * (N - 1) + j);
                 triangles.Add(i * N + j);
                 triangles.Add(i * N + j + 1);
+                triangles.Add(i * N + j + 1 + N);
+
+                triangles.Add(i * N + j);
+                triangles.Add(i * N + j + 1 + N);
+                triangles.Add(i * N + j + N);
+
             }
         }
 
-        terrainMesh.SetVertices(vertices);
-        terrainMesh.SetUVs(0, uvs);
-        terrainMesh.SetTriangles(triangles, 0);
-        terrainMesh.SetNormals(normals);
-        meshFilter.mesh = terrainMesh;
+        //CalcNormal(ref vertices, ref normals);
+
+        clothMesh.SetVertices(verticesRest);
+        clothMesh.SetUVs(0, uvs);
+        clothMesh.SetTriangles(triangles, 0);
+        clothMesh.SetNormals(normals);
+        meshFilter.mesh = clothMesh;
         for (int i = 0; i < v.Length; i++)
         {
             v[i] = new Vector3(0f, 0f, 0f);
@@ -194,13 +154,6 @@ public class ClothManager : MonoBehaviour
     public void ForwardEuler(ref Vector3[] vertices)
     {
 
-        float lRestStructural = Size / (N - 1);
-        float lRestShear = lRestStructural / Mathf.Sqrt(2);
-        float lRestBend = lRestStructural * 2;
-
-        float kStructural = kStructuralC / (1f / (N - 1));
-        float kShear = kStructuralC / (1f / (N - 1) * Mathf.Sqrt(2f) / 2);
-        float kBend = kBendC / (1f / (N - 1) * 2);
         for (int i = 0; i < N; i++)
         {
             for (int j = 0; j < N; j++)
@@ -250,103 +203,40 @@ public class ClothManager : MonoBehaviour
 
                 if (i - 1 >= 0 && j - 1 >= 0)
                 {
-                    Vector3 d = vertices[N * N + (i - 1) * (N - 1) + j - 1] - vertices[i * N + j];
+                    Vector3 d = vertices[(i - 1) * N + j - 1] - vertices[i * N + j];
                     f[i * N + j] += kShear * d.normalized * (d.magnitude - lRestShear);
                 }
-                if (i - 1 >= 0 && j < N - 1)
+                if (i - 1 >= 0 && j + 1 < N)
                 {
-                    Vector3 d = vertices[N * N + (i - 1) * (N - 1) + j] - vertices[i * N + j];
+                    Vector3 d = vertices[(i - 1) * N + j + 1] - vertices[i * N + j];
                     f[i * N + j] += kShear * d.normalized * (d.magnitude - lRestShear);
                 }
-                if (i < N - 1 && j - 1 >= 0)
+                if (i + 1 < N && j - 1 >= 0)
                 {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j - 1] - vertices[i * N + j];
+                    Vector3 d = vertices[(i + 1) * N + j - 1] - vertices[i * N + j];
                     f[i * N + j] += kShear * d.normalized * (d.magnitude - lRestShear);
                 }
-                if (i < N - 1 && j < N - 1)
+                if (i + 1 < N && j + 1 < N)
                 {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j] - vertices[i * N + j];
+                    Vector3 d = vertices[(i + 1) * N + j + 1] - vertices[i * N + j];
                     f[i * N + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                }
-            }
-        }
-        for (int i = 0; i < N - 1; i++)
-        {
-            for (int j = 0; j < N - 1; j++)
-            {
-                f[N * N + i * (N - 1) + j] = new Vector3(0f, 0f, 0f);
-                if (i - 2 >= 0)
-                {
-                    Vector3 d = vertices[N * N + (i - 2) * (N - 1) + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kBend * d.normalized * (d.magnitude - lRestBend);
-                }
-                if (j - 2 >= 0)
-                {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j - 2] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kBend * d.normalized * (d.magnitude - lRestBend);
-                }
-                if (i + 2 < N - 1)
-                {
-                    Vector3 d = vertices[N * N + (i + 2) * (N - 1) + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kBend * d.normalized * (d.magnitude - lRestBend);
-                }
-                if (j + 2 < N - 1)
-                {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j + 2] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kBend * d.normalized * (d.magnitude - lRestBend);
-                }
-                if (i - 1 >= 0)
-                {
-                    Vector3 d = vertices[N * N + (i - 1) * (N - 1) + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
-                }
-                if (j - 1 >= 0)
-                {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j - 1] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
-                }
-                if (i + 1 < N - 1)
-                {
-                    Vector3 d = vertices[N * N + (i + 1) * (N - 1) + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
-                }
-                if (j + 1 < N - 1)
-                {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j + 1] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
-                }
-
-                {
-                    Vector3 d = vertices[i * N + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                }
-                {
-                    Vector3 d = vertices[i * N + j + 1] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                }
-                {
-                    Vector3 d = vertices[(i + 1) * N + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                }
-                {
-                    Vector3 d = vertices[(i + 1) * N + j + 1] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kShear * d.normalized * (d.magnitude - lRestShear);
                 }
             }
         }
         float mass = totMass / v.Length;
-        for (int i = 0; i < f.Length; i++) {
+        for (int i = 0; i < f.Length; i++)
+        {
             f[i] += new Vector3(0f, -1f, 0f) * 9.8f * mass;
         }
         for (int i = 0; i < f.Length; i++)
         {
-            f[i] += -v[i] * kDamp;
+            f[i] += -v[i] * kDamp * Size * Size / (N * N);
         }
 
         tnow += dT;
         for (int i = 0; i < f.Length; i++)
         {
-            f[i] += new Vector3(0f, 0f, -1f) * Mathf.Pow(Mathf.Sin(tnow * tWind), 2f) * fWind;
+            f[i] += new Vector3(0f, 0f, -1f) * Mathf.Pow(Mathf.Sin(tnow * tWind), 2f) * fWind * Size * Size / (N * N);
         }
 
 
@@ -373,7 +263,7 @@ public class ClothManager : MonoBehaviour
             X[i] = 1f;
         }
         int I;
-        for(I = 0; I < 30; I++)
+        for (I = 0; I < 30; I++)
         {
             float mx = 0f;
             for (int i = 0; i < n; i++)
@@ -403,7 +293,76 @@ public class ClothManager : MonoBehaviour
         Debug.Log(I);
     }
 
-    void AddSpringForce(int xj, int xi, float a, float b, ref Vector3 d, float c)
+    Vector3 V0(int x) {
+        return new Vector3(v0[x * 3 + 0], v0[x * 3 + 1], v0[x * 3 + 2]);
+    }
+
+    void fvadd(ref float[] fv, int x, Vector3 v) {
+        fv[x * 3 + 0] += v.x;
+        fv[x * 3 + 1] += v.y;
+        fv[x * 3 + 2] += v.z;
+    }
+
+    void fvset(ref float[] fv, int x, Vector3 v)
+    {
+        fv[x * 3 + 0] = v.x;
+        fv[x * 3 + 1] = v.y;
+        fv[x * 3 + 2] = v.z;
+    }
+
+    bool FixEdgeStrain(int x, int y, ref Vector3[] vertices) {
+        float lRest = (verticesRest[x] - verticesRest[y]).magnitude;
+        Vector3 d = (vertices[x] + dT * V0(x)) - (vertices[y] + dT * V0(y));
+        float lNow = d.magnitude;
+        if (lNow > lRest * 1.1f)
+        {
+            Vector3 cv = (lNow - lRest * 1.1f) / dT / 2f * d.normalized / 2f;
+            fvadd(ref dv0, x, -cv);
+            fvadd(ref dv0, y, cv);
+            return true;
+        }
+        if (lNow < lRest * .9f)
+        {
+            Vector3 cv = (lNow - lRest * .9f) / dT / 2f * d.normalized / 2f;
+            fvadd(ref dv0, x, -cv);
+            fvadd(ref dv0, y, cv);
+            return true;
+        }
+        return false;
+    }
+
+    void FixStrain(ref Vector3[] vertices)
+    {
+        bool flag = true;
+        for (int i = 0; i < dv0.Length; i++)
+        {
+            dv0[i] = 0;
+        }
+        int I;
+        for(I = 0; I < 5; I++)
+        {
+            flag = false;
+            for (int i = 0; i < triangles.Count; i += 3)
+            {
+                flag = flag || FixEdgeStrain(triangles[i], triangles[i + 1], ref vertices);
+            }
+            if (flag)
+            {
+                for (int i = 0; i < v0.Length; i++)
+                {
+                    v0[i] += dv0[i];
+                    dv0[i] = 0;
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+        Debug.LogFormat("FixStrain{0}", I);
+    }
+
+        void AddSpringForce(int xj, int xi, float a, float b, ref Vector3 d, float c)
     {
         mat.Add(xi * 3 + 0, xi * 3 + 0, c * a * (-1f * (1f - b / d.magnitude) - b * Mathf.Pow(d.x, 2) / Mathf.Pow(d.magnitude, 3)));
         mat.Add(xi * 3 + 1, xi * 3 + 1, c * a * (-1f * (1f - b / d.magnitude) - b * Mathf.Pow(d.y, 2) / Mathf.Pow(d.magnitude, 3)));
@@ -413,16 +372,11 @@ public class ClothManager : MonoBehaviour
         mat.Add(xi * 3 + 2, xj * 3 + 2, c * a * (1f * (1f - b / d.magnitude) + b * Mathf.Pow(d.z, 2) / Mathf.Pow(d.magnitude, 3)));
     }
 
-    public void BackwardEuler(ref Vector3[] vertices)
+    public void SpringMassBackwardEuler(ref Vector3[] vertices)
     {
         tnow += dT;
-        float lRestStructural = Size / (N - 1);
-        float lRestShear = lRestStructural / Mathf.Sqrt(2);
-        float lRestBend = lRestStructural * 2;
 
-        float kStructural = kStructuralC / (1f / (N - 1));
-        float kShear = kStructuralC / (1f / (N - 1) * Mathf.Sqrt(2f) / 2);
-        float kBend = kBendC / (1f / (N - 1) * 2);
+
         mat = new MySparseMatrix(v.Length * 3);
 
         float mass = totMass / v.Length;
@@ -481,106 +435,30 @@ public class ClothManager : MonoBehaviour
                     f[i * N + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
                     AddSpringForce(i * N + j + 1, i * N + j, kStructural, lRestStructural, ref d, cc);
                 }
+
                 if (i - 1 >= 0 && j - 1 >= 0)
                 {
-                    Vector3 d = vertices[N * N + (i - 1) * (N - 1) + j - 1] - vertices[i * N + j];
+                    Vector3 d = vertices[(i - 1) * N + j - 1] - vertices[i * N + j];
                     f[i * N + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                    AddSpringForce(N * N + (i - 1) * (N - 1) + j - 1, i * N + j, kShear, lRestShear, ref d, cc);
+                    AddSpringForce((i - 1) * N + j - 1, i * N + j, kShear, lRestShear, ref d, cc);
                 }
-                if (i - 1 >= 0 && j < N - 1)
+                if (i - 1 >= 0 && j + 1 < N)
                 {
-                    Vector3 d = vertices[N * N + (i - 1) * (N - 1) + j] - vertices[i * N + j];
+                    Vector3 d = vertices[(i - 1) * N + j + 1] - vertices[i * N + j];
                     f[i * N + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                    AddSpringForce(N * N + (i - 1) * (N - 1) + j, i * N + j, kShear, lRestShear, ref d, cc);
+                    AddSpringForce((i - 1) * N + j + 1, i * N + j, kShear, lRestShear, ref d, cc);
                 }
-                if (i < N - 1 && j - 1 >= 0)
+                if (i + 1 < N && j - 1 >= 0)
                 {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j - 1] - vertices[i * N + j];
+                    Vector3 d = vertices[(i + 1) * N + j - 1] - vertices[i * N + j];
                     f[i * N + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                    AddSpringForce(N * N + i * (N - 1) + j - 1, i * N + j, kShear, lRestShear, ref d, cc);
+                    AddSpringForce((i + 1) * N + j - 1, i * N + j, kShear, lRestShear, ref d, cc);
                 }
-                if (i < N - 1 && j < N - 1)
+                if (i + 1 < N && j + 1 < N)
                 {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j] - vertices[i * N + j];
+                    Vector3 d = vertices[(i + 1) * N + j + 1] - vertices[i * N + j];
                     f[i * N + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                    AddSpringForce(N * N + i * (N - 1) + j, i * N + j, kShear, lRestShear, ref d, cc);
-                }
-            }
-        }
-        for (int i = 0; i < N - 1; i++)
-        {
-            for (int j = 0; j < N - 1; j++)
-            {
-                f[N * N + i * (N - 1) + j] = new Vector3(0f, 0f, 0f);
-                if (i - 2 >= 0)
-                {
-                    Vector3 d = vertices[N * N + (i - 2) * (N - 1) + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kBend * d.normalized * (d.magnitude - lRestBend);
-                    AddSpringForce(N * N + (i - 2) * (N - 1) + j, N * N + i * (N - 1) + j, kBend, lRestBend, ref d, cc);
-                }
-                if (j - 2 >= 0)
-                {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j - 2] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kBend * d.normalized * (d.magnitude - lRestBend);
-                    AddSpringForce(N * N + i * (N - 1) + j - 2, N * N + i * (N - 1) + j, kBend, lRestBend, ref d, cc);
-                }
-                if (i + 2 < N - 1)
-                {
-                    Vector3 d = vertices[N * N + (i + 2) * (N - 1) + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kBend * d.normalized * (d.magnitude - lRestBend);
-                    AddSpringForce(N * N + (i + 2) * (N - 1) + j, N * N + i * (N - 1) + j, kBend, lRestBend, ref d, cc);
-                }
-                if (j + 2 < N - 1)
-                {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j + 2] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kBend * d.normalized * (d.magnitude - lRestBend);
-                    AddSpringForce(N * N + i * (N - 1) + j + 2, N * N + i * (N - 1) + j, kBend, lRestBend, ref d, cc);
-                }
-
-                if (i - 1 >= 0)
-                {
-                    Vector3 d = vertices[N * N + (i - 1) * (N - 1) + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
-                    AddSpringForce(N * N + (i - 1) * (N - 1) + j, N * N + i * (N - 1) + j, kStructural, lRestStructural, ref d, cc);
-                }
-                if (j - 1 >= 0)
-                {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j - 1] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
-                    AddSpringForce(N * N + i * (N - 1) + j - 1, N * N + i * (N - 1) + j, kStructural, lRestStructural, ref d, cc);
-                }
-                if (i + 1 < N - 1)
-                {
-                    Vector3 d = vertices[N * N + (i + 1) * (N - 1) + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
-                    AddSpringForce(N * N + (i + 1) * (N - 1) + j, N * N + i * (N - 1) + j, kStructural, lRestStructural, ref d, cc);
-                }
-                if (j + 1 < N - 1)
-                {
-                    Vector3 d = vertices[N * N + i * (N - 1) + j + 1] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kStructural * d.normalized * (d.magnitude - lRestStructural);
-                    AddSpringForce(N * N + i * (N - 1) + j + 1, N * N + i * (N - 1) + j, kStructural, lRestStructural, ref d, cc);
-                }
-
-                {
-                    Vector3 d = vertices[i * N + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                    AddSpringForce(i * N + j, N * N + i * (N - 1) + j, kShear, lRestShear, ref d, cc);
-                }
-                {
-                    Vector3 d = vertices[i * N + j + 1] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                    AddSpringForce(i * N + j + 1, N * N + i * (N - 1) + j, kShear, lRestShear, ref d, cc);
-                }
-                {
-                    Vector3 d = vertices[(i + 1) * N + j] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                    AddSpringForce((i + 1) * N + j, N * N + i * (N - 1) + j, kShear, lRestShear, ref d, cc);
-                }
-                {
-                    Vector3 d = vertices[(i + 1) * N + j + 1] - vertices[N * N + i * (N - 1) + j];
-                    f[N * N + i * (N - 1) + j] += kShear * d.normalized * (d.magnitude - lRestShear);
-                    AddSpringForce((i + 1) * N + j + 1, N * N + i * (N - 1) + j, kShear, lRestShear, ref d, cc);
+                    AddSpringForce((i + 1) * N + j + 1, i * N + j, kShear, lRestShear, ref d, cc);
                 }
             }
         }
@@ -591,12 +469,12 @@ public class ClothManager : MonoBehaviour
         }
         for (int i = 0; i < f.Length; i++)
         {
-            f[i] += -new Vector3(v0[i * 3 + 0], v0[i * 3 + 1], v0[i * 3 + 2]) * kDamp;
+            f[i] += -new Vector3(v0[i * 3 + 0], v0[i * 3 + 1], v0[i * 3 + 2]) * kDamp * Size * Size / (N * N);
         }
 
         for (int i = 0; i < f.Length; i++)
         {
-            f[i] += new Vector3(0f, 0f, -1f) * Mathf.Pow(Mathf.Sin(tnow * tWind), 2f) * fWind;
+            f[i] += new Vector3(0f, 0f, -1f) * Mathf.Pow(Mathf.Sin(tnow * tWind), 2f) * fWind * Size * Size / (N * N);
         }
 
         mat.Multiply(ref v0, ref B);
@@ -604,11 +482,11 @@ public class ClothManager : MonoBehaviour
         {
             B[i * 3 + 0] = dT / mass * (B[i * 3 + 0] * dT + f[i].x);
             B[i * 3 + 1] = dT / mass * (B[i * 3 + 1] * dT + f[i].y);
-            B[i * 3 + 2] = dT / mass * (B[i * 3 + 2] * dT + f[i].z - dT * 2f * fWind * Mathf.Sin(tnow * tWind) * Mathf.Cos(tnow * tWind) * tWind);
+            B[i * 3 + 2] = dT / mass * (B[i * 3 + 2] * dT + f[i].z - dT * 2f * fWind * Mathf.Sin(tnow * tWind) * Mathf.Cos(tnow * tWind) * tWind * Size * Size / (N * N));
         }
         for (int i = 0; i < v0.Length; i++)
         {
-            mat.Add(i, i, 1 + kDamp / mass * dT);
+            mat.Add(i, i, 1 + kDamp / mass * dT * Size * Size / (N * N));
         }
 
         B[(N - 1) * 3 + 0] = 0;
@@ -635,7 +513,14 @@ public class ClothManager : MonoBehaviour
         GS();
         for (int i = 0; i < v0.Length; i++)
         {
-            v0[i] += X[i]; 
+            v0[i] += X[i];
+        }
+        if (fixStrain) {
+            FixStrain(ref vertices);
+            vertices[N - 1] = new Vector3(0f, 0f, Size);
+            vertices[(N - 1) * N + N - 1] = new Vector3(Size, 0f, Size);
+            fvset(ref v0, N - 1, new Vector3(0f, 0f, 0f));
+            fvset(ref v0, (N - 1) * N + N - 1, new Vector3(0f, 0f, 0f));
         }
         for (int i = 0; i < vertices.Length; i++)
         {
@@ -647,7 +532,7 @@ public class ClothManager : MonoBehaviour
     {
         Vector3[] vertices = gameObject.GetComponent<MeshFilter>().mesh.vertices;
         //ForwardEuler(ref vertices);
-        BackwardEuler(ref vertices);
+        SpringMassBackwardEuler(ref vertices);
         List<Vector3> normals = new List<Vector3>();
         CalcNormal(ref vertices, ref normals);
         gameObject.GetComponent<MeshFilter>().mesh.vertices = vertices;
